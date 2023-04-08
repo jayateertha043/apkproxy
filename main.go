@@ -157,7 +157,7 @@ func modifyAndroidManifest(manifestPath string) {
 			"android:networkSecurityConfig=\"@xml/network_security_config")
 	} else if strings.Contains(manifest, "<application") {
 		manifest = strings.ReplaceAll(manifest, "<application",
-			"<application android:networkSecurityConfig=\"@xml/network_security_config\"")
+			"<application android:networkSecurityConfig=\"@xml/network_security_config\" ")
 	} else {
 		panic("No <application> element found in AndroidManifest.xml")
 	}
