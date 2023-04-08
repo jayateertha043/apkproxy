@@ -12,11 +12,11 @@ import (
 
 var (
 	apkFilePath string
-	burpCACert  string
-	keystore    string
-	storepass   string
-	keyalias    string
-	keypass     string
+	//burpCACert  string
+	keystore  string
+	storepass string
+	keyalias  string
+	keypass   string
 )
 
 type NetworkSecurityConfig struct {
@@ -32,7 +32,7 @@ type CACert struct {
 func init() {
 	os.Setenv("NoDefaultCurrentDirectoryInExePath", "1")
 	flag.StringVar(&apkFilePath, "apk", "", "APK file path")
-	flag.StringVar(&burpCACert, "burp-ca", "test", "Burp CA certificate file path")
+	//flag.StringVar(&burpCACert, "burp-ca", "test", "Burp CA certificate file path")
 	flag.StringVar(&keystore, "keystore", "apkproxy.jks", "Keystore file path")
 	flag.StringVar(&storepass, "storepass", "apkproxy", "Keystore password")
 	flag.StringVar(&keyalias, "keyalias", "apkproxy", "Keystore key alias")
@@ -43,7 +43,7 @@ func init() {
 func main() {
 
 	// Check required flags
-	if apkFilePath == "" || burpCACert == "" || keystore == "" || storepass == "" || keyalias == "" || keypass == "" {
+	if apkFilePath == "" /*|| burpCACert == ""*/ || keystore == "" || storepass == "" || keyalias == "" || keypass == "" {
 		fmt.Println("Missing required flags")
 		flag.PrintDefaults()
 		os.Exit(1)
