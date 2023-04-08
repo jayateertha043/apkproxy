@@ -7,16 +7,20 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
 var (
 	apkFilePath string
-	//burpCACert  string
-	keystore  string
-	storepass string
-	keyalias  string
-	keypass   string
+	//UserCACert  string
+	keystore     string
+	storepass    string
+	keyalias     string
+	keypass      string
+	apkToolPath  string
+	keytoolPath  string
+	uberSignPath string
 )
 
 type NetworkSecurityConfig struct {
@@ -30,9 +34,9 @@ type CACert struct {
 }
 
 func init() {
-	os.Setenv("NoDefaultCurrentDirectoryInExePath", "1")
+	//os.Setenv("NoDefaultCurrentDirectoryInExePath", "1")
 	flag.StringVar(&apkFilePath, "apk", "", "APK file path")
-	//flag.StringVar(&burpCACert, "burp-ca", "test", "Burp CA certificate file path")
+	//flag.StringVar(&UserCACert, "User-ca", "test", "User CA certificate file path")
 	flag.StringVar(&keystore, "keystore", "apkproxy.jks", "Keystore file path")
 	flag.StringVar(&storepass, "storepass", "apkproxy", "Keystore password")
 	flag.StringVar(&keyalias, "keyalias", "apkproxy", "Keystore key alias")
@@ -41,9 +45,15 @@ func init() {
 }
 
 func main() {
-
+	apkToolPath = os.Getenv("APKTOOL_PATH")
+	keytoolPath = os.Getenv("KEYTOOL_PATH")
+	uberSignPath = os.Getenv("UBER_SIGN_PATH")
+	//fmt.Println(apkToolPath, keytoolPath, uberSignPath)
+	if apkToolPath == "" || keytoolPath == "" || uberSignPath == "" {
+		panic("APKTOOL_PATH empty")
+	}
 	// Check required flags
-	if apkFilePath == "" /*|| burpCACert == ""*/ || keystore == "" || storepass == "" || keyalias == "" || keypass == "" {
+	if apkFilePath == "" /*|| UserCACert == ""*/ || keystore == "" || storepass == "" || keyalias == "" || keypass == "" {
 		fmt.Println("Missing required flags")
 		flag.PrintDefaults()
 		os.Exit(1)
@@ -52,25 +62,36 @@ func main() {
 	// Decompile APK
 	apkDir := decompileAPK(apkFilePath)
 
-	// Add Burp CA certificate to network_security_config.xml
+	// Add User CA certificate to network_security_config.xml
 	nsConfigPath := apkDir + "/res/xml/network_security_config.xml"
-	addBurpCACertToNSConfig(nsConfigPath)
+	addUserCACertToNSConfig(nsConfigPath)
 
 	// Modify AndroidManifest.xml
 	manifestPath := apkDir + "/AndroidManifest.xml"
 	modifyAndroidManifest(manifestPath)
 
+	apkName := getFileNameWithoutExt(apkFilePath)
+	outDir, err := ioutil.TempDir(".", "apkproxy-"+apkName+"-")
+	if err != nil {
+		panic("Unable to create output directory ...")
+	}
+
 	// Rebuild APK
-	outputPath := "modded-" + apkFilePath
-	rebuildApk(apkDir, outputPath, "apktool")
+	outputPath := outDir + string(os.PathSeparator) + "modded-" + apkFilePath
+	fmt.Println("OutputDir:", outputPath)
+	rebuildApk(apkDir, outputPath, apkToolPath)
 
 	// Generate keystore if it doesn't exist
 	if _, err := os.Stat(keystore); os.IsNotExist(err) {
 		generateKeystore(keystore, keyalias, storepass)
 	}
-
-	// Sign APK
-	signApk(outputPath, keystore, keyalias, keypass)
+	signApk(outputPath, keystore, keyalias, storepass, keypass)
+	/*
+		// Sign APK
+		signApk(outputPath, keystore, keyalias, keypass)
+		//Zip align
+		outputPathz := "./mod/moddedz-" + apkFilePath*/
+	//zipAlign(outputPath, outputPathz)
 
 	fmt.Println("Done!")
 }
@@ -78,24 +99,31 @@ func main() {
 func decompileAPK(apkFilePath string) string {
 	fmt.Println("Decompiling APK...")
 
+	_, err := os.Open(apkFilePath)
+	if err != nil {
+		panic("Unable to read apk file ...")
+	}
+
 	apkDir, err := ioutil.TempDir(".", "apktool-")
 	if err != nil {
 		panic(err)
 	}
 	//defer os.RemoveAll(apkDir)
 
-	cmd := exec.Command("apktool.bat", "d", "-f", "-o", apkDir, apkFilePath)
+	cmd := exec.Command(apkToolPath, "d", "-f", "-o", apkDir, apkFilePath)
+	//fmt.Println(cmd.Args)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	//fmt.Println(string(stdouterr))
+	if err != nil {
 		panic(err)
 	}
-
 	return apkDir
 }
 
-func addBurpCACertToNSConfig(nsConfigPath string) {
-	fmt.Println("Adding Burp CA certificate to network_security_config.xml...")
+func addUserCACertToNSConfig(nsConfigPath string) {
+	fmt.Println("Adding User CA certificate to network_security_config.xml...")
 
 	// Check if file already exists
 	if _, err := os.Stat(nsConfigPath); os.IsNotExist(err) {
@@ -171,21 +199,33 @@ func rebuildApk(apkPath string, outputPath string, apktoolPath string) {
 	fmt.Println("Rebuilding APK...")
 
 	cmd := exec.Command(apktoolPath, "b", apkPath, "-o", outputPath, "--use-aapt2")
-	if err := cmd.Run(); err != nil {
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	//fmt.Println(string(stdouterr))
+	if err != nil {
 		panic(err)
 	}
+
 }
 
-func signApk(apkPath string, keystorePath string, alias string, password string) {
+func signApk(apkPath string, keystorePath string, alias string, kspassword string, kskeypassword string) {
 	fmt.Println("Signing APK...")
-
-	// Build jarsigner command
-	cmd := exec.Command("jarsigner", "-verbose", "-sigalg", "SHA1withRSA", "-digestalg", "SHA1",
-		"-keystore", keystorePath, apkPath, alias)
-	cmd.Stdin = strings.NewReader(password)
-
-	// Run jarsigner command
-	if err := cmd.Run(); err != nil {
+	outPutDir := filepath.Dir(apkPath) + string(os.PathSeparator) + "signed" + string(os.PathSeparator)
+	fmt.Println("Signed Path:", outPutDir)
+	err1 := os.Mkdir(outPutDir, 0755)
+	if err1 != nil {
+		panic("Unable to create signed output directory...")
+	}
+	// Build Uber APK Sign command
+	cmd := exec.Command("java", "-jar", uberSignPath, "-a", apkPath, "--ks", keystorePath, "--ksAlias", alias, "--ksPass", kspassword, "--ksKeyPass", kskeypassword, "-out", outPutDir)
+	fmt.Println(cmd.Args)
+	// Run Uber APK Sign command
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	//fmt.Println(string(stdouterr))
+	if err != nil {
 		panic(err)
 	}
 }
@@ -194,10 +234,21 @@ func generateKeystore(keystorePath string, alias string, password string) {
 	fmt.Println("Generating keystore...")
 
 	// Build keytool command
-	cmd := exec.Command("keytool", "-genkey", "-v", "-dname", "cn=apkproxy, ou=apkproxy, o=jayateertha043, c=IN", "-validity", "20000", "-keyalg", "RSA", "-keystore", keystorePath, "-alias", alias, "-storepass", password, "-keypass", password)
+	cmd := exec.Command(keytoolPath, "-genkey", "-v", "-dname", "cn=apkproxy, ou=apkproxy, o=jayateertha043, c=IN", "-validity", "20000", "-keyalg", "RSA", "-keystore", keystorePath, "-alias", alias, "-storepass", password, "-keypass", password)
 
 	// Run keytool command
-	if err := cmd.Run(); err != nil {
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	//fmt.Println(string(stdouterr))
+	if err != nil {
 		panic(err)
 	}
+}
+
+func getFileNameWithoutExt(filePath string) string {
+	fileExt := filepath.Ext(filePath)
+	fileName := filepath.Base(filePath)
+	fileNameWithoutExt := fileName[0 : len(fileName)-len(fileExt)]
+	return fileNameWithoutExt
 }
